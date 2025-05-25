@@ -10,6 +10,7 @@ let timeout = 5000;
 let err_count = 0;
 
 async function fetchData(apiPath) {
+    const HTTP_CLIENT_ERROR = 400;
     if (cache[apiPath]) {
         if (debug_mode) console.log("Using cached data for", apiPath);
         return cache[apiPath];
@@ -18,7 +19,7 @@ async function fetchData(apiPath) {
     return new Promise((resolve, reject) => {
         let data = " ";
         const req = https.get(`https://swapi.dev/api/${apiPath}`, { rejectUnauthorized: false }, (res) => {
-            if (res.statusCode >= 400) {
+            if (res.statusCode >= HTTP_CLIENT_ERROR) {
                 err_count++;
                 return reject(new Error(`Request failed with status code ${res.statusCode}`));
             }
@@ -76,7 +77,8 @@ async function printData() {
         console.log("\nTotal Starships:", starshipData.count);
         
         // Print first 3 starships with details
-        for (let i = 0; i < 3; i++) {
+        const MAX_STARSHIPS = 3;
+        for (let i = 0; i < MAX_STARSHIPS; i++) {
             if (i < starshipData.results.length) {
                 const starship = starshipData.results[i];
                 console.log(`\nStarship ${i+1}:`);
@@ -93,13 +95,15 @@ async function printData() {
         }
         
         // Find planets with population > 1000000000 and diameter > 10000
+        const POPULATION_THRESHOLD = 1_000_000_000;
+        const DIAMETER_THRESHOLD = 10_000;
         const planetsData = await fetchData("planets/?page=1");
         total_size += JSON.stringify(planetsData).length;
         console.log("\nLarge populated planets:");
         for (let i = 0; i < planetsData.results.length; i++) {
             const planet = planetsData.results[i];
-            if (planet.population !== "unknown" && parseInt(planet.population) > 1000000000 && 
-                planet.diameter !== "unknown" && parseInt(planet.diameter) > 10000) {
+            if (planet.population !== "unknown" && parseInt(planet.population) > POPULATION_THRESHOLD && 
+                planet.diameter !== "unknown" && parseInt(planet.diameter) > DIAMETER_THRESHOLD) {
                 console.log(planet.name, "- Pop:", planet.population, "- Diameter:", planet.diameter, "- Climate:", planet.climate);
                 // Check if it appears in any films
                 if (planet.films && planet.films.length > 0) {
@@ -127,7 +131,8 @@ async function printData() {
         }
         
         // Get a vehicle and display details
-        if (lastId <= 4) {
+        const MAX_VEHICLE_ID = 4;
+        if (lastId <= MAX_VEHICLE_ID) {
             const vehicle = await fetchData("vehicles/" + lastId);
             total_size += JSON.stringify(vehicle).length;
             console.log("\nFeatured Vehicle:");
@@ -157,7 +162,8 @@ async function printData() {
 }
 
 // Process command line arguments
-const args = process.argv.slice(2);
+const ARG_START_INDEX = 2;
+const args = process.argv.slice(ARG_START_INDEX);
 if (args.includes("--no-debug")) {
     debug_mode = false;
 }
@@ -169,9 +175,12 @@ if (args.includes("--timeout")) {
 }
 
 // Create a simple HTTP server to display the results
+const STATUS_OK = 200;
+const STATUS_NOT_FOUND = 404;
+const DEFAULT_PORT = 3000;
 const server = http.createServer((req, res) => {
     if (req.url === "/" || req.url === "/index.html") {
-        res.writeHead(200, { "Content-Type" : "text/html" });
+        res.writeHead(STATUS_OK, { "Content-Type" : "text/html" });
         res.end(`
             <!DOCTYPE html>
             <html>
@@ -214,10 +223,10 @@ const server = http.createServer((req, res) => {
         `);
     } else if (req.url === "/api") {
         printData();
-        res.writeHead(200, { "Content-Type" : "text/plain" });
+        res.writeHead(STATUS_OK, { "Content-Type" : "text/plain" });
         res.end("Check server console for results");
     } else if (req.url === "/stats") {
-        res.writeHead(200, { "Content-Type" : "application/json" });
+        res.writeHead(STATUS_OK, { "Content-Type" : "application/json" });
         res.end(JSON.stringify({
             api_calls: fetch_count,
             cache_size: Object.keys(cache).length,
@@ -227,12 +236,12 @@ const server = http.createServer((req, res) => {
             timeout: timeout
         }));
     } else {
-        res.writeHead(404, { "Content-Type" : "text/plain" });
+        res.writeHead(STATUS_NOT_FOUND, { "Content-Type" : "text/plain" });
         res.end("Not Found");
     }
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || DEFAULT_PORT;
 server.listen(PORT, () => {
     console.log(`Server running at http://localhost:${PORT}/`);
     console.log("Open the URL in your browser and click the button to fetch Star Wars data");
