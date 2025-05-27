@@ -3,51 +3,39 @@
 
 const http = require("http");
 const https = require("https");
+const process = require("process");
 
 const cache = {};
 let debug_mode = true;
 let timeout = 5000;
 let err_count = 0;
+const HTTP_CLIENT_ERROR = 400;
 
-async function f(x) {
-    if (cache[x]) {
-        if (debug_mode) console.log("Using cached data for", x);
-        return cache[x];
-    }
-    
-    return new Promise((r, j) => {
-        let d = " ";
-        const req = https.get(`https://swapi.dev/api/${x}`, { rejectUnauthorized: false }, (res) => {
-            if (res.statusCode >= 400) {
+async function fetchData(apiPath) {
+    cacheTest(apiPath);
+    return new Promise((resolve, reject) => {
+        let data = " ";
+        const request = https.get(`https://swapi.dev/api/${apiPath}`, { rejectUnauthorized: false }, (response) => {
+            const errorTest = errorCounterIncreaser(response, HTTP_CLIENT_ERROR);
+            if (errorTest) {
                 err_count++;
-                return j(new Error(`Request failed with status code ${res.statusCode}`));
+                return reject(errorTest);
             }
-            
-            res.on("data", (chunk) => { d += chunk; });
-            res.on("end", () => {
+            response.on("data", (chunk) => { data += chunk; });
+            response.on("end", () => {
                 try {
-                    const p = JSON.parse(d);
-                    cache[x] = p; // Cache the result
-                    r(p);
-                    if (debug_mode) {
-                        console.log(`Successfully fetched data for ${x}`);
-                        console.log(`Cache size: ${Object.keys(cache).length}`);
-                    }
-                } catch (e) {
+                    dataConverter(data, resolve, reject, apiPath);
+                } catch (error) {
                     err_count++;
-                    j(e);
+                    reject(error);
                 }
             });
-        }).on("error", (e) => {
+            return undefined;
+        }).on("error", (error) => {
             err_count++;
-            j(e);
+            reject(error);
         });
-        
-        req.setTimeout(timeout, () => {
-            req.abort();
-            err_count++;
-            j(new Error(`Request timeout for ${x}`));
-        });
+        setupRequestTimeout(request, reject, apiPath);
     });
 }
 
@@ -56,108 +44,35 @@ let lastId = 1;
 let fetch_count = 0;
 let total_size = 0;
 
-async function p() {
+async function printData() {
     try {
         if (debug_mode) console.log("Starting data fetch...");
         fetch_count++;
+        const character = await fetchData(`people/${  lastId}`);
+        characterInfo(character);
+        const starshipData = await fetchData("starships/?page=1");
+        total_size += JSON.stringify(starshipData).length;
+        console.log("\nTotal Starships:", starshipData.count);
+        const MAX_STARSHIPS = 3;
+        starshipsCounter(MAX_STARSHIPS, starshipData);
+        const POPULATION_THRESHOLD = 1_000_000_000;
+        const DIAMETER_THRESHOLD = 10_000;
+        const planetsData = await fetchData("planets/?page=1");
+        planetPopulationTest(POPULATION_THRESHOLD, DIAMETER_THRESHOLD, planetsData);
+        const films = await fetchData("films/");
+        moviesOrganazier(films);
+        vehicleInfo();
+        printStats(debug_mode);
         
-        const p1 = await f("people/" + lastId);
-        total_size += JSON.stringify(p1).length;
-        console.log("Character:", p1.name);
-        console.log("Height:", p1.height);
-        console.log("Mass:", p1.mass);
-        console.log("Birthday:", p1.birth_year);
-        if (p1.films && p1.films.length > 0) {
-            console.log("Appears in", p1.films.length, "films");
-        }
-        
-        const s1 = await f("starships/?page=1");
-        total_size += JSON.stringify(s1).length;
-        console.log("\nTotal Starships:", s1.count);
-        
-        // Print first 3 starships with details
-        for (let i = 0; i < 3; i++) {
-            if (i < s1.results.length) {
-                const s = s1.results[i];
-                console.log(`\nStarship ${i+1}:`);
-                console.log("Name:", s.name);
-                console.log("Model:", s.model);
-                console.log("Manufacturer:", s.manufacturer);
-                console.log("Cost:", s.cost_in_credits !== "unknown" ? s.cost_in_credits +  "credits" : "unknown");
-                console.log("Speed:", s.max_atmosphering_speed);
-                console.log("Hyperdrive Rating:", s.hyperdrive_rating);
-                if (s.pilots && s.pilots.length > 0) {
-                    console.log("Pilots:", s.pilots.length);
-                }
-            }
-        }
-        
-        // Find planets with population > 1000000000 and diameter > 10000
-        const planets = await f("planets/?page=1");
-        total_size += JSON.stringify(planets).length;
-        console.log("\nLarge populated planets:");
-        for (let i = 0; i < planets.results.length; i++) {
-            const p = planets.results[i];
-            if (p.population !== "unknown" && parseInt(p.population) > 1000000000 && 
-                p.diameter !== "unknown" && parseInt(p.diameter) > 10000) {
-                console.log(p.name, "- Pop:", p.population, "- Diameter:", p.diameter, "- Climate:", p.climate);
-                // Check if it appears in any films
-                if (p.films && p.films.length > 0) {
-                    console.log(`  Appears in ${p.films.length} films`);
-                }
-            }
-        }
-        
-        // Get films and sort by release date, then print details
-        const films = await f("films/");
-        total_size += JSON.stringify(films).length;
-        const filmList = films.results;
-        filmList.sort((a, b) => {
-            return new Date(a.release_date) - new Date(b.release_date);
-        });
-        
-        console.log("\nStar Wars Films in chronological order:");
-        for (let i = 0; i < filmList.length; i++) {
-            const film = filmList[i];
-            console.log(`${i+1}. ${film.title} (${film.release_date})`);
-            console.log(`   Director: ${film.director}`);
-            console.log(`   Producer: ${film.producer}`);
-            console.log(`   Characters: ${film.characters.length}`);
-            console.log(`   Planets: ${film.planets.length}`);
-        }
-        
-        // Get a vehicle and display details
-        if (lastId <= 4) {
-            const vehicle = await f("vehicles/" + lastId);
-            total_size += JSON.stringify(vehicle).length;
-            console.log("\nFeatured Vehicle:");
-            console.log("Name:", vehicle.name);
-            console.log("Model:", vehicle.model);
-            console.log("Manufacturer:", vehicle.manufacturer);
-            console.log("Cost:", vehicle.cost_in_credits, "credits");
-            console.log("Length:", vehicle.length);
-            console.log("Crew Required:", vehicle.crew);
-            console.log("Passengers:", vehicle.passengers);
-            lastId++;  // Increment for next call
-        }
-        
-        // Print stats
-        if (debug_mode) {
-            console.log("\nStats:");
-            console.log("API Calls:", fetch_count);
-            console.log("Cache Size:", Object.keys(cache).length);
-            console.log("Total Data Size:", total_size, "bytes");
-            console.log("Error Count:", err_count);
-        }
-        
-    } catch (e) {
-        console.error("Error:", e.message);
+    } catch (error) {
+        console.error("Error:", error.message);
         err_count++;
     }
 }
 
 // Process command line arguments
-const args = process.argv.slice(2);
+const ARG_START_INDEX = 2;
+const args = process.argv.slice(ARG_START_INDEX);
 if (args.includes("--no-debug")) {
     debug_mode = false;
 }
@@ -169,10 +84,10 @@ if (args.includes("--timeout")) {
 }
 
 // Create a simple HTTP server to display the results
-const server = http.createServer((req, res) => {
-    if (req.url === "/" || req.url === "/index.html") {
-        res.writeHead(200, { "Content-Type" : "text/html" });
-        res.end(`
+const STATUS_OK = 200;
+const STATUS_NOT_FOUND = 404;
+const DEFAULT_PORT = 3000;
+const html = `
             <!DOCTYPE html>
             <html>
                 <head>
@@ -198,7 +113,8 @@ const server = http.createServer((req, res) => {
                                 .then(res => res.text())
                                 .then(text => {
                                     alert('API request made! Check server console.');
-                                    document.getElementById('results').innerHTML = '<p>Data fetched! Check server console.</p>';
+                                    document.getElementById('results').innerHTML = 
+                                          '<p>Data fetched! Check server console.</p>';
                                 })
                                 .catch(err => {
                                     document.getElementById('results').innerHTML = '<p>Error: ' + err.message + '</p>';
@@ -206,19 +122,27 @@ const server = http.createServer((req, res) => {
                         }
                     </script>
                     <div class="footer">
-                        <p>API calls: ${fetch_count} | Cache entries: ${Object.keys(cache).length} | Errors: ${err_count}</p>
+                        <p>API calls: ${fetch_count} | 
+                        Cache entries: ${Object.keys(cache).length} | 
+                        Errors: ${err_count}</p>
                         <pre>Debug mode: ${debug_mode ? "ON" : "OFF"} | Timeout: ${timeout}ms</pre>
                     </div>
                 </body>
             </html>
-        `);
-    } else if (req.url === "/api") {
-        p();
-        res.writeHead(200, { "Content-Type" : "text/plain" });
-        res.end("Check server console for results");
-    } else if (req.url === "/stats") {
-        res.writeHead(200, { "Content-Type" : "application/json" });
-        res.end(JSON.stringify({
+        `
+        ;
+
+const server = http.createServer((request, response) => {
+    if (request.url === "/" || request.url === "/index.html") {
+        response.writeHead(STATUS_OK, { "Content-Type" : "text/html" });
+        response.end(html);
+    } else if (request.url === "/api") {
+        printData();
+        response.writeHead(STATUS_OK, { "Content-Type" : "text/plain" });
+        response.end("Check server console for results");
+    } else if (request.url === "/stats") {
+        response.writeHead(STATUS_OK, { "Content-Type" : "application/json" });
+        response.end(JSON.stringify({
             api_calls: fetch_count,
             cache_size: Object.keys(cache).length,
             data_size: total_size,
@@ -227,12 +151,12 @@ const server = http.createServer((req, res) => {
             timeout: timeout
         }));
     } else {
-        res.writeHead(404, { "Content-Type" : "text/plain" });
-        res.end("Not Found");
+        response.writeHead(STATUS_NOT_FOUND, { "Content-Type" : "text/plain" });
+        response.end("Not Found");
     }
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || DEFAULT_PORT;
 server.listen(PORT, () => {
     console.log(`Server running at http://localhost:${PORT}/`);
     console.log("Open the URL in your browser and click the button to fetch Star Wars data");
@@ -241,3 +165,156 @@ server.listen(PORT, () => {
         console.log("Timeout:", timeout, "ms");
     }
 }); 
+
+function cacheTest(apiPath) {
+    if (cache[apiPath]) {
+        if (debug_mode) console.log("Using cached data for", apiPath);
+        return cache[apiPath];
+    }
+    return null;
+}
+
+function errorCounterIncreaser(responseCode, HTTPErrorCode) {
+    if (responseCode.statusCode >= HTTPErrorCode) {
+        return new Error(`Request failed with status code ${responseCode}`);
+    }
+    return null;
+}
+
+function dataConverter(data, resolve, reject,apiPath) {
+    try {
+        const processedData = JSON.parse(data);
+        cache[apiPath] = processedData;
+        resolve(processedData);
+        if (debug_mode) {
+            console.log(`Successfully fetched data for ${apiPath}`);
+            console.log(`Cache size: ${Object.keys(cache).length}`);
+        }
+    } catch (error) {
+        err_count++;
+        reject(error);
+    }
+}
+
+function setupRequestTimeout(request, reject, apiPath) {
+    request.setTimeout(timeout, () => {
+        timeOutSetterActions(request, reject, apiPath);
+    });
+}
+
+function timeOutSetterActions(request, reject, apiPath) {
+    request.abort();
+    err_count++;
+    reject(new Error(`Request timeout for ${apiPath}`));
+}
+
+function starshipsCounter(MAX_STARSHIPS, starshipData) {
+    for (let i = 0; i < MAX_STARSHIPS; i++) {
+        const starship = starshipData.results[i];
+        starshipTest(i, starshipData);
+        if (starship.pilots && starship.pilots.length > 0) {
+            console.log("Pilots:", starship.pilots.length);
+        }
+    }
+}
+
+function starshipTest(index, starship) {
+    console.log(`Starship ${index + 1}:
+    Name: ${starship.name}
+    Model: ${starship.model}
+    Manufacturer: ${starship.manufacturer}
+    Cost: ${starship.cost_in_credits !== "unknown" ? `${starship.cost_in_credits} credits` : "unknown"}
+    Speed: ${starship.max_atmosphering_speed}
+    Hyperdrive Rating: ${starship.hyperdrive_rating}`);
+    
+}
+
+function characterInfo(character) {
+    total_size += JSON.stringify(character).length;
+    console.log(`Character: ${character.name}
+    Height: ${character.height}
+    Mass: ${character.mass}
+    Birthday: ${character.birth_year}`);
+    if (character.films && character.films.length > 0) {
+        console.log("Appears in", character.films.length, "films");
+    }
+}
+
+function planetPopulationTest(planetPopulation, planetDiameter, planetsData) {
+    total_size += JSON.stringify(planetsData).length;
+    console.log("\nLarge populated planets:");
+    for (let i = 0; i < planetsData.results.length; i++) {
+        const planet = planetsData.results[i];
+        knownPlanet(planet, planetPopulation, planetDiameter);
+        // Check if it appears in any films
+        planetFilmTest(planet);
+    }
+}
+
+function knownPlanet(planet, planetPopulation, planetDiameter) {
+    if (planet.population !== "unknown" && parseInt(planet.population) > planetPopulation && 
+        planet.diameter !== "unknown" && parseInt(planet.diameter) > planetDiameter) {
+        console.log(planet.name, "- Pop:", planet.population, "- Diameter:", 
+            planet.diameter, "- Climate:", planet.climate);
+    }
+}
+    
+
+function planetFilmTest(planet) {
+    if (planet.films && planet.films.length > 0) {
+        console.log(`  Appears in ${planet.films.length} films`);
+    }
+}
+
+function moviesOrganazier(films) {
+    movieDateOrganizer(films);
+}
+
+function movieDateOrganizer(films) {
+    total_size += JSON.stringify(films).length;
+    const filmList = films.results;
+    filmList.sort((filmA, filmB) => {
+        return new Date(filmA.release_date) - new Date(filmB.release_date);
+    });
+
+    movieChronologicalOrder(filmList);
+}
+
+function movieChronologicalOrder(filmList) {
+    console.log("\nStar Wars Films in chronological order:");
+    for (let i = 0; i < filmList.length; i++) {
+        const film = filmList[i];
+        console.log(` ${i + 1}. ${film.title} (${film.release_date})
+        Director: ${film.director}
+        Producer: ${film.producer}
+        Characters: ${film.characters.length}
+        Planets: ${film.planetsData.length}`);
+    }
+}
+
+async function vehicleInfo() {
+    const MAX_VEHICLE_ID = 4;
+    if (lastId <= MAX_VEHICLE_ID) {
+        const vehicle = await fetchData(`vehicles/${  lastId}`);
+        total_size += JSON.stringify(vehicle).length;
+        console.log(`Featured Vehicle:
+        Name: ${vehicle.name}
+        Model: ${vehicle.model}
+        Manufacturer: ${vehicle.manufacturer}
+        Cost: ${vehicle.cost_in_credits} credits
+        Length: ${vehicle.length}
+        Crew Required: ${vehicle.crew}
+        Passengers: ${vehicle.passengers}`);
+        lastId++;  // Increment for next call
+    }
+}
+
+function printStats(debug_mode) {
+    if (debug_mode) {
+        console.log(`Stats:
+        API Calls: ${fetch_count}
+        Cache Size: ${Object.keys(cache).length}
+        Total Data Size: ${total_size} bytes
+        Error Count: ${err_count}`);
+    }
+}
