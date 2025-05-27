@@ -16,7 +16,7 @@ async function fetchData(apiPath) {
     return new Promise((resolve, reject) => {
         let data = " ";
         const request = https.get(`https://swapi.dev/api/${apiPath}`, { rejectUnauthorized: false }, (response) => {
-            const errorTest = errorCounterIncreaser(response, HTTP_CLIENT_ERROR);
+            const errorTest = errorCounterIncreaser(response, reject, HTTP_CLIENT_ERROR);
             if (errorTest) {
                 err_count++;
                 return reject(errorTest);
@@ -174,9 +174,10 @@ function cacheTest(apiPath) {
     return null;
 }
 
-function errorCounterIncreaser(responseCode, HTTPErrorCode) {
+function errorCounterIncreaser(responseCode, reject, HTTPErrorCode) {
+    
     if (responseCode.statusCode >= HTTPErrorCode) {
-        return new Error(`Request failed with status code ${responseCode}`);
+        return reject((`Request failed with status code ${responseCode.statusCode}`));
     }
     return null;
 }
@@ -287,25 +288,32 @@ function movieChronologicalOrder(filmList) {
         console.log(` ${i + 1}. ${film.title} (${film.release_date})
         Director: ${film.director}
         Producer: ${film.producer}
-        Characters: ${film.characters.length}
-        Planets: ${film.planetsData.length}`);
+        Characters: ${film.characters.length ?? 0}
+        Planets: ${film.planets.length ?? 0}`);
+        
     }
 }
 
 async function vehicleInfo() {
     const MAX_VEHICLE_ID = 4;
-    if (lastId <= MAX_VEHICLE_ID) {
-        const vehicle = await fetchData(`vehicles/${  lastId}`);
-        total_size += JSON.stringify(vehicle).length;
-        console.log(`Featured Vehicle:
-        Name: ${vehicle.name}
-        Model: ${vehicle.model}
-        Manufacturer: ${vehicle.manufacturer}
-        Cost: ${vehicle.cost_in_credits} credits
-        Length: ${vehicle.length}
-        Crew Required: ${vehicle.crew}
-        Passengers: ${vehicle.passengers}`);
-        lastId++;  // Increment for next call
+    try{
+        if (lastId <= MAX_VEHICLE_ID) {
+            const vehicle = await fetchData(`vehicles/${  lastId}`);
+            total_size += JSON.stringify(vehicle).length;
+            console.log(`Featured Vehicle:
+            Name: ${vehicle.name}
+            Model: ${vehicle.model}
+            Manufacturer: ${vehicle.manufacturer}
+            Cost: ${vehicle.cost_in_credits} credits
+            Length: ${vehicle.length}
+            Crew Required: ${vehicle.crew}
+            Passengers: ${vehicle.passengers}`);
+            lastId++;  // Increment for next call
+        }
+    }catch (error) {
+        console.log("mesangem de erro");
+        console.error("Error:", error);
+        err_count++;
     }
 }
 
