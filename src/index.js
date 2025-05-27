@@ -287,8 +287,8 @@ function movieChronologicalOrder(filmList) {
         console.log(` ${i + 1}. ${film.title} (${film.release_date})
         Director: ${film.director}
         Producer: ${film.producer}
-        Characters: ${film.characters.length}
-        Planets: ${film.planetsData.length}`);
+        Characters: ${film.characters.length ?? 0}
+        Planets: ${film.planetsData.length ?? 0}`);
     }
 }
 
